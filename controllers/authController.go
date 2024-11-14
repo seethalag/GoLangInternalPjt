@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"go-login-app/models"
+	"log"
 	"net/http"
+	"net/smtp"
+	"os"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -208,36 +211,40 @@ func ForgotPassword(c *gin.Context) {
     var foundUser models.User
     ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 
-    // Find the user by username
+    // Find user by username
     err := userCollection.FindOne(ctx, bson.M{"username": userInput.Username}).Decode(&foundUser)
     if err != nil {
         c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
         return
     }
 
-    // Generate a reset token and set its expiration time
+    // Generate reset token and expiration time
     resetToken, err := generateResetToken()
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate reset token"})
         return
     }
 
-    tokenExpiresAt := time.Now().Add(1 * time.Hour)  // Token valid for 1 hour
+    tokenExpiresAt := time.Now().Add(1 * time.Hour)
 
-    // Update user document with the reset token and expiration time
+    // Update user with reset token and expiration time
     _, err = userCollection.UpdateOne(ctx, bson.M{"_id": foundUser.ID}, bson.M{
         "$set": bson.M{
             "reset_token":     resetToken,
             "token_expires_at": tokenExpiresAt,
         },
     })
+
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not save reset token"})
         return
     }
 
-    // Simulate sending email (or you can integrate with an actual email service)
-    fmt.Println("Reset password link: http://localhost:8080/auth/reset-password?token=" + resetToken)
+    // Send the reset email
+    if err := SendResetEmail(foundUser.Username, resetToken); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not send reset email"})
+        return
+    }
 
     c.JSON(http.StatusOK, gin.H{"message": "Password reset link sent to your email"})
 }
@@ -294,4 +301,31 @@ func ResetPassword(c *gin.Context) {
     }
 
     c.JSON(http.StatusOK, gin.H{"message": "Password has been reset successfully"})
+}
+
+// SendResetEmail sends an email with the password reset link
+func SendResetEmail(toEmail string, resetToken string) error {
+    smtpHost := os.Getenv("SMTP_HOST")
+    smtpPort := os.Getenv("SMTP_PORT")
+    sender := os.Getenv("EMAIL_SENDER")
+    password := os.Getenv("EMAIL_PASSWORD")
+
+    fmt.Println("Sender-",sender)
+    fmt.Println("password-",password)
+
+    resetLink := fmt.Sprintf("http://localhost:8080/auth/reset-password?token=%s", resetToken)
+    subject := "Subject: Password Reset Request\n"
+    body := fmt.Sprintf("Click the following link to reset your password: %s", resetLink)
+    message := []byte(subject + "\n" + body)
+
+    auth := smtp.PlainAuth("", sender, password, smtpHost)
+
+    err := smtp.SendMail(smtpHost+":"+smtpPort, auth, sender, []string{toEmail}, message)
+    if err != nil {
+        log.Printf("SMTP error: %s", err)
+        return err
+    }
+
+    log.Println("Password reset email sent successfully to", toEmail)
+    return nil
 }
