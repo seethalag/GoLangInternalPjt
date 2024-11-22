@@ -4,17 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"go-login-app/models"
-	"io/ioutil"
+	"go-login-app/utils"
 	"log"
 	"net/http"
 	"net/smtp"
 	"os"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"go.mongodb.org/mongo-driver/bson"
@@ -28,13 +26,6 @@ var client, err = mongo.NewClient(options.Client().ApplyURI("mongodb+srv://pumex
 var userCollection = client.Database("armada").Collection("users")
 var validate = validator.New()
 
-var jwtSecret = []byte("jhdtrytuy767863hgyt6")  // In production, use env variables
-
-// JWT claims structure
-type Claims struct {
-    Username string `json:"username"`
-    jwt.StandardClaims
-}
 
 // Initialize MongoDB connection
 func init() {
@@ -57,36 +48,6 @@ func CheckPasswordHash(password, hash string) bool {
     return err == nil
 }
 
-// GenerateJWT generates a JWT token for the user
-func GenerateJWT(username string) (string, error) {
-    expirationTime := time.Now().Add(5 * time.Minute)
-    claims := &Claims{
-        Username: username,
-        StandardClaims: jwt.StandardClaims{
-            ExpiresAt: expirationTime.Unix(),
-        },
-    }
-
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-    tokenString, err := token.SignedString(jwtSecret)
-    if err != nil {
-        return "", err
-    }
-    return tokenString, nil
-}
-
-// ValidateJWT validates the JWT token from the request
-func ValidateJWT(tokenString string) (*Claims, bool) {
-    claims := &Claims{}
-    token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-        return jwtSecret, nil
-    })
-
-    if err != nil || !token.Valid {
-        return nil, false
-    }
-    return claims, true
-}
 
 func Register(c *gin.Context) {
     var user models.User
@@ -151,7 +112,7 @@ func Login(c *gin.Context) {
     }
 
     // Generate a JWT token
-    token, err := GenerateJWT(foundUser.Username)
+    token, err := utils.GenerateJWT(foundUser.Username)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
         return
@@ -161,29 +122,7 @@ func Login(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{"token": token})
 }
 
-func JWTAuthMiddleware() gin.HandlerFunc {
-    return func(c *gin.Context) {
-        tokenString := c.GetHeader("Authorization")
 
-        if tokenString == "" {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "No token provided"})
-            c.Abort()
-            return
-        }
-
-        // Validate the JWT token
-        claims, valid := ValidateJWT(tokenString)
-        if !valid {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-            c.Abort()
-            return
-        }
-
-        // Store claims in context for later use
-        c.Set("username", claims.Username)
-        c.Next()
-    }
-}
 
 func Profile(c *gin.Context) {
     username := c.MustGet("username").(string)
@@ -333,71 +272,7 @@ func SendResetEmail(toEmail string, resetToken string) error {
 }
 
 
-// OpenWeatherMapResponse defines the structure of the API response from OpenWeatherMap
-type OpenWeatherMapResponse struct {
-	Main struct {
-		Temp     float64 `json:"temp"`
-		Humidity int     `json:"humidity"`
-	} `json:"main"`
-	Name string `json:"name"`
-}
 
-// WeatherResponse defines the structure of the API response we want to return
-type WeatherResponse struct {
-	City       string  `json:"city"`
-	Temperature float64 `json:"temperature"`
-	Humidity    int     `json:"humidity"`
-}
-
-// getWeather fetches the weather data from OpenWeatherMap
-func GetWeather(city string) (*WeatherResponse, error) {
-	apiKey := os.Getenv("WEATHER_API_KEY")
-	url := fmt.Sprintf("http://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s&units=metric", city, apiKey)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to get weather data: %s", resp.Status)
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var weatherData OpenWeatherMapResponse
-	err = json.Unmarshal(body, &weatherData)
-	if err != nil {
-		return nil, err
-	}
-
-	return &WeatherResponse{
-		City:       weatherData.Name,
-		Temperature: weatherData.Main.Temp,
-		Humidity:    weatherData.Main.Humidity,
-	}, nil
-}
-
-// weatherHandler handles HTTP requests for weather data
-func WeatherHandler(c *gin.Context) {
-	// Extract the "city" parameter from the route
-	city := c.Param("city")
-
-	// Call the GetWeather function to fetch weather data
-	weatherData, err := GetWeather(city)
-	if err != nil {
-		// Respond with an error
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Respond with the weather data in JSON format
-	c.JSON(http.StatusOK, weatherData)
-}
 
 
 
