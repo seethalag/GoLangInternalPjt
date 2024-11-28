@@ -22,5 +22,6 @@ func AuthRoutes(router *gin.Engine) {
     {
         protectedGroup.GET("", controllers.Profile)
         protectedGroup.GET("/weather/:city", utils.WeatherHandler)
+        protectedGroup.GET("/utilization", utils.GetUtilization)
     }
 }
