@@ -2,7 +2,6 @@ package utils
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shirou/gopsutil/cpu"
@@ -10,42 +9,51 @@ import (
 	"github.com/shirou/gopsutil/mem"
 )
 
-// UtilizationResponse defines the structure of the JSON response
-type UtilizationResponse struct {
-	CPUUtilization    float64 `json:"cpu_utilization"`
-	MemoryUtilization float64 `json:"memory_utilization"`
-	StorageUtilization float64 `json:"storage_utilization"`
+// MetricsResponse represents the structure of the API response
+type MetricsResponse struct {
+	CPU struct {
+		Usage float64 `json:"usage_percent"`
+	} `json:"cpu"`
+	Memory struct {
+		UsedPercent float64 `json:"used_percent"`
+		TotalGB     float64 `json:"total_gb"`
+	} `json:"memory"`
+	Storage struct {
+		UsedPercent float64 `json:"used_percent"`
+		TotalGB     float64 `json:"total_gb"`
+	} `json:"storage"`
 }
 
-func GetUtilization(c *gin.Context) {
-	// Get CPU utilization
-	cpuUtil, err := cpu.Percent(time.Second, false)
+// GetSystemMetrics handles the `/metrics` endpoint
+func GetSystemMetrics(c *gin.Context) {
+	var response MetricsResponse
+
+	// Fetch CPU usage
+	cpuUsage, err := cpu.Percent(0, false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch CPU utilization"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch CPU usage"})
 		return
 	}
+	response.CPU.Usage = cpuUsage[0]
 
-	// Get Memory utilization
-	vmStat, err := mem.VirtualMemory()
+	// Fetch Memory usage
+	memStats, err := mem.VirtualMemory()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch memory utilization"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch memory stats"})
 		return
 	}
+	response.Memory.UsedPercent = memStats.UsedPercent
+	response.Memory.TotalGB = float64(memStats.Total) / 1e9
 
-	// Get Storage utilization
-	diskStat, err := disk.Usage("/")
+	// Fetch Disk usage
+	diskStats, err := disk.Usage("/")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch storage utilization"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch disk stats"})
 		return
 	}
+	response.Storage.UsedPercent = diskStats.UsedPercent
+	response.Storage.TotalGB = float64(diskStats.Total) / 1e9
 
-	// Build the response
-	utilResponse := UtilizationResponse{
-		CPUUtilization:    cpuUtil[0],
-		MemoryUtilization: vmStat.UsedPercent,
-		StorageUtilization: diskStat.UsedPercent,
-	}
-
-	// Send response as JSON
-	c.JSON(http.StatusOK, utilResponse)
+	// Return the metrics as JSON
+	c.JSON(http.StatusOK, response)
 }

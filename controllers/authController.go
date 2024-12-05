@@ -18,7 +18,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // MongoDB setup
@@ -35,19 +34,6 @@ func init() {
         panic(err)
     }
 }
-
-// HashPassword hashes the user password
-func HashPassword(password string) (string, error) {
-    bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
-    return string(bytes), err
-}
-
-// CheckPasswordHash compares plain password with hashed password
-func CheckPasswordHash(password, hash string) bool {
-    err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-    return err == nil
-}
-
 
 func Register(c *gin.Context) {
     var user models.User
@@ -66,7 +52,7 @@ func Register(c *gin.Context) {
     }
 
     // Hash the password
-    hashedPassword, _ := HashPassword(user.Password)
+    hashedPassword, _ := utils.HashPassword(user.Password)
     user.Password = hashedPassword
 
     // Save user to the database
@@ -106,7 +92,7 @@ func Login(c *gin.Context) {
     }
 
     // Check if the password matches
-    if !CheckPasswordHash(user.Password, foundUser.Password) {
+    if !utils.CheckPasswordHash(user.Password, foundUser.Password) {
         c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
         return
     }
@@ -219,7 +205,7 @@ func ResetPassword(c *gin.Context) {
     }
 
     // Hash the new password
-    hashedPassword, err := HashPassword(passwordResetInput.NewPassword)
+    hashedPassword, err := utils.HashPassword(passwordResetInput.NewPassword)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not hash password"})
         return
@@ -270,6 +256,70 @@ func SendResetEmail(toEmail string, resetToken string) error {
     log.Println("Password reset email sent successfully to", toEmail)
     return nil
 }
+
+type ChangePasswordRequest struct {
+    Username      string `json:"username"`
+    OldPassword string `json:"oldPassword"`
+    NewPassword string `json:"newPassword"`
+}
+
+// ResetPassword handles the request to reset the password
+func ChangePassword(c *gin.Context) {
+    var req ChangePasswordRequest
+    // Decode the request body
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+        return
+    }
+
+    // Validate input
+    if req.Username == "" || req.OldPassword == "" || req.NewPassword == "" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "All fields are required"})
+        return
+    }   
+
+    var foundUser models.User
+     // Check if the user exists in the database
+     ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+     err = userCollection.FindOne(ctx, bson.M{"username": req.Username}).Decode(&foundUser)
+     if err != nil {
+         c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+         return
+     }
+
+       // Check if the password matches
+    if !utils.CheckPasswordHash(req.OldPassword, foundUser.Password) {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Old password is incorrect"})
+        return
+    }
+    // Hash the new password
+    hashedPassword, err := utils.HashPassword(req.NewPassword)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not hash password"})
+        return
+    }
+
+  // Update user's password and clear the reset token
+  _, err = userCollection.UpdateOne(ctx, bson.M{"_id": foundUser.ID}, bson.M{
+      "$set": bson.M{
+          "password": hashedPassword,
+      },
+      "$unset": bson.M{
+          "reset_token":     "",
+          "token_expires_at": "",
+      },
+  })
+
+  if err != nil {
+      c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not change password"})
+      return
+  }
+  c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
+}
+
+
+
+
 
 
 
