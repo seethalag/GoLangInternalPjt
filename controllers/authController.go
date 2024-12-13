@@ -105,7 +105,7 @@ func Login(c *gin.Context) {
     }
 
     // Return token to client
-    c.JSON(http.StatusOK, gin.H{"token": token})
+    c.JSON(http.StatusOK, gin.H{"token": token,"username":foundUser.Username})
 }
 
 
